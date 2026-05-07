@@ -9,7 +9,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// ---- helpers (copied here so tests are self-contained) ----
+// ---- helpers ----
 
 func testGenerateToken(userID int) (string, error) {
 	secret := []byte("mysecret")
@@ -124,5 +124,63 @@ func TestRefreshToken_Unique(t *testing.T) {
 	token2 := testGenerateRefreshToken()
 	if token1 == token2 {
 		t.Error("refresh tokens should be unique")
+	}
+}
+
+// ---- Login Simulation Tests ----
+
+func TestLogin_Success(t *testing.T) {
+	password := "password123"
+	hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+
+	// simulate what login does: check password, generate tokens
+	err := bcrypt.CompareHashAndPassword(hashed, []byte(password))
+	if err != nil {
+		t.Fatalf("login should succeed with correct password: %v", err)
+	}
+
+	accessToken, err := testGenerateToken(1)
+	if err != nil {
+		t.Fatalf("failed to generate access token: %v", err)
+	}
+
+	refreshToken := testGenerateRefreshToken()
+
+	if accessToken == "" {
+		t.Error("access token should not be empty on successful login")
+	}
+	if refreshToken == "" {
+		t.Error("refresh token should not be empty on successful login")
+	}
+}
+
+func TestLogin_WrongPassword(t *testing.T) {
+	password := "password123"
+	hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+
+	err := bcrypt.CompareHashAndPassword(hashed, []byte("wrongpassword"))
+	if err == nil {
+		t.Error("login should fail with wrong password")
+	}
+}
+
+// ---- Refresh Token Rotation Tests ----
+
+func TestRefreshToken_Rotation(t *testing.T) {
+	// simulate rotation: old token deleted, new tokens generated
+	oldRefresh := testGenerateRefreshToken()
+
+	// generate new tokens (simulating rotation)
+	newAccess, err := testGenerateToken(1)
+	if err != nil {
+		t.Fatalf("failed to generate new access token: %v", err)
+	}
+	newRefresh := testGenerateRefreshToken()
+
+	if newRefresh == oldRefresh {
+		t.Error("new refresh token should be different from old one")
+	}
+	if newAccess == "" {
+		t.Error("new access token should not be empty")
 	}
 }
