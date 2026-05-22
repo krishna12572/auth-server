@@ -36,11 +36,15 @@ Migrations run automatically on startup. The port is read from `.env` (default 8
 
 ### 3. Seed a user
 
+The database already contains a test user. If it doesn't, insert one manually:
+
 ```bash
-go run main.go
+docker exec auth_postgres psql -U auth -d authdb -c "INSERT INTO users (email, password_hash, created_at) VALUES ('admin@example.com', '\$2a\$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NOW());"
 ```
 
-Creates a test user. If you get a duplicate email error, change the email in `main.go` and run again.
+This creates a user with:
+- Email: `admin@example.com`
+- Password: `password`
 
 ---
 
@@ -48,10 +52,10 @@ Creates a test user. If you get a duplicate email error, change the email in `ma
 
 Migration files are in the `migrations/` folder, generated with Atlas.
 
-To apply migrations manually:
+Migrations run automatically when the server starts. To apply manually, download Atlas from https://atlasgo.io and run:
 
 ```bash
-.\atlas.exe migrate apply --env local
+atlas migrate apply --env local
 ```
 
 ---
@@ -60,7 +64,8 @@ To apply migrations manually:
 
 Open `http://localhost:8082` in your browser for the GraphQL playground.
 
-**Login**
+### Login
+
 ```graphql
 mutation {
   login(email: "test5@example.com", password: "password123") {
@@ -70,12 +75,15 @@ mutation {
 }
 ```
 
-**Get current user**
+### Get current user
 
-Add to Headers tab:
+Add to the **Headers** tab in GraphiQL:
+
 ```json
 { "Authorization": "Bearer YOUR_ACCESS_TOKEN" }
 ```
+
+Then run:
 
 ```graphql
 query {
@@ -86,7 +94,10 @@ query {
 }
 ```
 
-**Refresh**
+### Refresh token
+
+First login to get a refresh token, then immediately run:
+
 ```graphql
 mutation {
   refresh(refreshToken: "YOUR_REFRESH_TOKEN") {
@@ -96,7 +107,10 @@ mutation {
 }
 ```
 
-**Logout**
+> Note: refresh tokens expire after 24 hours. You must login first to get a valid one.
+
+### Logout
+
 ```graphql
 mutation {
   logout(refreshToken: "YOUR_REFRESH_TOKEN")
