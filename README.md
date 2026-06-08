@@ -1,4 +1,4 @@
-markdown# auth-server
+# auth-server
 
 A GraphQL authentication server built with Go, Ent, and gqlgen. Provides JWT-based login, token refresh, and logout.
 
