@@ -1,6 +1,3 @@
-All files look correct! Now here's the final README — open Notepad:
-powershellnotepad README.md
-Select all, delete, paste this:
 markdown# auth-server
 
 A GraphQL authentication server built with Go, Ent, and gqlgen. Provides JWT-based login, token refresh, and logout.
