@@ -2,12 +2,27 @@ package schema
 
 import (
 	"entgo.io/ent"
-	"entgo.io/ent/schema/field"
+	"entgo.io/ent/privacy"
 	"entgo.io/ent/schema/edge"
+	"entgo.io/ent/schema/field"
 )
 
 type RefreshToken struct {
 	ent.Schema
+}
+
+func (RefreshToken) Mixin() []ent.Mixin {
+	return []ent.Mixin{UserMixin{}}
+}
+
+func (RefreshToken) Policy() ent.Policy {
+	return privacy.Policy{
+		Mutation: privacy.MutationPolicy{
+			AllowIfAdmin(),
+			AllowIfOwner(),
+			DenyIfNoViewer(),
+		},
+	}
 }
 
 func (RefreshToken) Fields() []ent.Field {
@@ -19,9 +34,6 @@ func (RefreshToken) Fields() []ent.Field {
 
 func (RefreshToken) Edges() []ent.Edge {
 	return []ent.Edge{
-		edge.From("user", User.Type).
-			Ref("tokens").
-			Unique().
-			Required(),
+		edge.From("user", User.Type).Ref("refresh_tokens").Unique().Required(),
 	}
 }

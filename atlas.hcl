@@ -1,6 +1,6 @@
 env "local" {
-  url = "postgres://auth:auth@localhost:5432/authdb?sslmode=disable"
-  dev = "postgres://auth:auth@localhost:5432/authdb_dev?sslmode=disable"
+  url = "postgres://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/${DB_NAME}?sslmode=disable"
+  dev = "postgres://${DB_USER}:${DB_PASSWORD}@localhost:${DB_PORT}/${DB_NAME}_dev?sslmode=disable"
   migration {
     dir = "file://migrations"
   }

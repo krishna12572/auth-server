@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -9,178 +10,178 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// ---- helpers ----
+func hashPassword(password string) (string, error) {
+	b, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(b), err
+}
 
-func testGenerateToken(userID int) (string, error) {
-	secret := []byte("mysecret")
+func checkPassword(hash, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+}
+
+const testSecret = "test-secret-key"
+
+func makeAccessToken(userID int) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": userID,
 		"exp":     time.Now().Add(time.Hour).Unix(),
 	})
-	return token.SignedString(secret)
+	return token.SignedString([]byte(testSecret))
 }
 
-func testGenerateRefreshToken() string {
+func parseAccessToken(tokenStr string) (jwt.MapClaims, error) {
+	parsed, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(testSecret), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, jwt.ErrTokenInvalidClaims
+	}
+	return claims, nil
+}
+
+func makeRefreshToken() string {
 	return uuid.New().String()
 }
 
-// ---- Password Tests ----
-
-func TestHashPassword(t *testing.T) {
-	password := "password123"
-	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+func TestHashPassword_ProducesHash(t *testing.T) {
+	hash, err := hashPassword("secret123")
 	if err != nil {
-		t.Fatalf("failed to hash password: %v", err)
+		t.Fatalf("hashPassword: unexpected error: %v", err)
 	}
-	if string(hashed) == password {
-		t.Fatal("hashed password should not equal plain text")
+	if hash == "secret123" {
+		t.Fatal("hashPassword: hash must not equal plain-text password")
+	}
+	if !strings.HasPrefix(hash, "$2a$") {
+		t.Errorf("hashPassword: expected bcrypt hash prefix, got %q", hash[:4])
+	}
+}
+
+func TestHashPassword_DifferentHashesSameInput(t *testing.T) {
+	h1, _ := hashPassword("secret123")
+	h2, _ := hashPassword("secret123")
+	if h1 == h2 {
+		t.Error("hashPassword: same input should produce different hashes due to bcrypt salting")
 	}
 }
 
 func TestCheckPassword_Correct(t *testing.T) {
-	password := "password123"
-	hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	err := bcrypt.CompareHashAndPassword(hashed, []byte(password))
-	if err != nil {
-		t.Errorf("expected password to match, got: %v", err)
+	hash, _ := hashPassword("correct-horse")
+	if err := checkPassword(hash, "correct-horse"); err != nil {
+		t.Errorf("checkPassword: expected match, got: %v", err)
 	}
 }
 
 func TestCheckPassword_Wrong(t *testing.T) {
-	password := "password123"
-	hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	err := bcrypt.CompareHashAndPassword(hashed, []byte("wrongpassword"))
-	if err == nil {
-		t.Error("expected error for wrong password, got nil")
+	hash, _ := hashPassword("correct-horse")
+	if err := checkPassword(hash, "wrong-horse"); err == nil {
+		t.Error("checkPassword: expected error for wrong password, got nil")
 	}
 }
 
-// ---- JWT Tests ----
-
-func TestGenerateToken(t *testing.T) {
-	token, err := testGenerateToken(1)
-	if err != nil {
-		t.Fatalf("generateToken returned error: %v", err)
-	}
-	if token == "" {
-		t.Fatal("generateToken returned empty token")
+func TestCheckPassword_Empty(t *testing.T) {
+	hash, _ := hashPassword("non-empty")
+	if err := checkPassword(hash, ""); err == nil {
+		t.Error("checkPassword: empty password should not match")
 	}
 }
 
-func TestValidateToken(t *testing.T) {
-	token, err := testGenerateToken(42)
+func TestMakeAccessToken_ContainsUserID(t *testing.T) {
+	token, err := makeAccessToken(99)
 	if err != nil {
-		t.Fatalf("generateToken failed: %v", err)
+		t.Fatalf("makeAccessToken: %v", err)
 	}
-	parsed, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
-		return []byte("mysecret"), nil
-	})
+	claims, err := parseAccessToken(token)
 	if err != nil {
-		t.Fatalf("failed to parse token: %v", err)
+		t.Fatalf("parseAccessToken: %v", err)
 	}
-	if !parsed.Valid {
-		t.Error("expected token to be valid")
-	}
-	claims, ok := parsed.Claims.(jwt.MapClaims)
-	if !ok {
-		t.Fatal("failed to extract claims")
-	}
-	userID := int(claims["user_id"].(float64))
-	if userID != 42 {
-		t.Errorf("expected user_id 42, got %d", userID)
+	if int(claims["user_id"].(float64)) != 99 {
+		t.Errorf("expected user_id=99, got %v", claims["user_id"])
 	}
 }
 
-func TestToken_Expiry(t *testing.T) {
-	secret := []byte("mysecret")
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+func TestParseAccessToken_ExpiredToken(t *testing.T) {
+	expired := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": 1,
 		"exp":     time.Now().Add(-time.Hour).Unix(),
 	})
-	signed, _ := token.SignedString(secret)
-	_, err := jwt.Parse(signed, func(t *jwt.Token) (interface{}, error) {
-		return secret, nil
+	signed, _ := expired.SignedString([]byte(testSecret))
+	if _, err := parseAccessToken(signed); err == nil {
+		t.Error("parseAccessToken: expected error for expired token")
+	}
+}
+
+func TestParseAccessToken_WrongSecret(t *testing.T) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": 1,
+		"exp":     time.Now().Add(time.Hour).Unix(),
 	})
-	if err == nil {
-		t.Error("expected error for expired token, got nil")
+	signed, _ := token.SignedString([]byte("wrong-secret"))
+	if _, err := parseAccessToken(signed); err == nil {
+		t.Error("parseAccessToken: expected error for wrong secret")
 	}
 }
 
-// ---- Refresh Token Tests ----
-
-func TestGenerateRefreshToken(t *testing.T) {
-	token := testGenerateRefreshToken()
-	if token == "" {
-		t.Fatal("generateRefreshToken returned empty string")
+func TestParseAccessToken_Tampered(t *testing.T) {
+	token, _ := makeAccessToken(1)
+	if _, err := parseAccessToken(token + "tampered"); err == nil {
+		t.Error("parseAccessToken: expected error for tampered token")
 	}
-	_, err := uuid.Parse(token)
+}
+
+func TestMakeRefreshToken_IsValidUUID(t *testing.T) {
+	rt := makeRefreshToken()
+	if _, err := uuid.Parse(rt); err != nil {
+		t.Errorf("makeRefreshToken: expected valid UUID, got %q", rt)
+	}
+}
+
+func TestMakeRefreshToken_IsUnique(t *testing.T) {
+	seen := make(map[string]struct{}, 100)
+	for i := 0; i < 100; i++ {
+		rt := makeRefreshToken()
+		if _, dup := seen[rt]; dup {
+			t.Fatalf("makeRefreshToken: duplicate at iteration %d", i)
+		}
+		seen[rt] = struct{}{}
+	}
+}
+
+func TestLoginFlow_Success(t *testing.T) {
+	hash, _ := hashPassword("hunter2")
+	if err := checkPassword(hash, "hunter2"); err != nil {
+		t.Fatalf("login: password check failed: %v", err)
+	}
+	token, err := makeAccessToken(42)
 	if err != nil {
-		t.Errorf("refresh token is not a valid UUID: %v", err)
+		t.Fatalf("login: token generation failed: %v", err)
 	}
-}
-
-func TestRefreshToken_Unique(t *testing.T) {
-	token1 := testGenerateRefreshToken()
-	token2 := testGenerateRefreshToken()
-	if token1 == token2 {
-		t.Error("refresh tokens should be unique")
-	}
-}
-
-// ---- Login Simulation Tests ----
-
-func TestLogin_Success(t *testing.T) {
-	password := "password123"
-	hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-
-	// simulate what login does: check password, generate tokens
-	err := bcrypt.CompareHashAndPassword(hashed, []byte(password))
+	claims, err := parseAccessToken(token)
 	if err != nil {
-		t.Fatalf("login should succeed with correct password: %v", err)
+		t.Fatalf("login: could not parse token: %v", err)
 	}
-
-	accessToken, err := testGenerateToken(1)
-	if err != nil {
-		t.Fatalf("failed to generate access token: %v", err)
-	}
-
-	refreshToken := testGenerateRefreshToken()
-
-	if accessToken == "" {
-		t.Error("access token should not be empty on successful login")
-	}
-	if refreshToken == "" {
-		t.Error("refresh token should not be empty on successful login")
+	if int(claims["user_id"].(float64)) != 42 {
+		t.Error("login: wrong user_id in token")
 	}
 }
 
-func TestLogin_WrongPassword(t *testing.T) {
-	password := "password123"
-	hashed, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-
-	err := bcrypt.CompareHashAndPassword(hashed, []byte("wrongpassword"))
-	if err == nil {
-		t.Error("login should fail with wrong password")
+func TestLoginFlow_WrongPassword(t *testing.T) {
+	hash, _ := hashPassword("hunter2")
+	if err := checkPassword(hash, "wrong"); err == nil {
+		t.Error("login: expected failure for wrong password")
 	}
 }
 
-// ---- Refresh Token Rotation Tests ----
-
-func TestRefreshToken_Rotation(t *testing.T) {
-	// simulate rotation: old token deleted, new tokens generated
-	oldRefresh := testGenerateRefreshToken()
-
-	// generate new tokens (simulating rotation)
-	newAccess, err := testGenerateToken(1)
-	if err != nil {
-		t.Fatalf("failed to generate new access token: %v", err)
-	}
-	newRefresh := testGenerateRefreshToken()
-
-	if newRefresh == oldRefresh {
-		t.Error("new refresh token should be different from old one")
-	}
-	if newAccess == "" {
-		t.Error("new access token should not be empty")
+func TestRefreshFlow_NewTokensDiffer(t *testing.T) {
+	old := makeRefreshToken()
+	new := makeRefreshToken()
+	if old == new {
+		t.Error("refresh tokens must be unique")
 	}
 }

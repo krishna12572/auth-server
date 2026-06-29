@@ -1,149 +1,144 @@
-auth-server README with copyable code blocks
-auth-server
-A JWT-based authentication server built with Go and GraphQL. Handles login, logout, token refresh, and protected routes.
+# auth-server
 
-Go
-PostgreSQL
-Ent
-gqlgen
-Atlas
-JWT + bcrypt
-Requirements
-Git · Go 1.21+ · Docker
+A GraphQL authentication server built with Go, Ent, and gqlgen. Provides JWT-based login, token refresh, and logout.
 
-Installing requirements (Windows)
-1
-Install Git
+## Stack
 
-Download the installer from https://git-scm.com/download/win and run it. Click through all the defaults — they are fine for most users. Once installed, close and reopen your Command Prompt.
+- Go 1.22+
+- PostgreSQL 16 (Docker)
+- Ent (ORM with code generation)
+- gqlgen (GraphQL)
+- Atlas (migrations)
+- JWT + bcrypt
 
-2
-Install Go
+---
 
-Download the Windows installer from https://go.dev/dl/ and run it.
+## Requirements
 
-3
-Install Docker Desktop
+- Go 1.22+ — https://go.dev/dl
+- Docker Desktop — https://www.docker.com/products/docker-desktop
 
-Download from https://www.docker.com/products/docker-desktop/. You do not need to sign in to a Docker account — just launch Docker Desktop and skip or close any sign-in prompt.
+---
 
-After installing, verify all three with:
+## Setup
 
-git --version
-go version
-docker --version
-
-Copy
-Setup
-1
-Clone the repository
-
+### 1. Clone the repo
 git clone https://github.com/krishna12572/auth-server
 cd auth-server
 
-Copy
-2
-Start the database
+### 2. Configure environment
 
+Windows:
+copy .env.example .env
+
+Mac/Linux:
+cp .env.example .env
+
+The default values work out of the box — no editing needed unless you want custom DB credentials.
+
+### 3. Start the database
 docker compose up -d
 
-Copy
-You should see: Container auth_postgres Started
+You should see: `Container auth_postgres Started`
 
-3
-Start the server
-
+### 4. Run the server
 go run server.go
 
-Copy
-Migrations run automatically on startup. The port is read from .env (default 8082).
+Server starts at http://localhost:8082. Database migrations run automatically on startup.
 
-4
-Seed the database (required)
+### 5. Seed the database (required before first login)
 
-The database starts empty — you must insert a test user manually before you can log in. Open a new terminal and run:
+Connect to the database:
+docker exec -it auth_postgres psql -U auth -d authdb
 
-docker exec auth_postgres psql -U auth -d authdb -c "INSERT INTO users (email, password_hash, created_at) VALUES ('admin@example.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NOW());"
+Paste this SQL and press Enter:
+INSERT INTO users (email, password_hash, created_at) VALUES ('admin@example.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NOW());
 
-Copy
-You should see INSERT 0 1 — this confirms the user was created.
+Type `\q` and press Enter to exit psql.
 
-Email
-admin@example.com
-Password
-password
-Atlas migrations
-Migration files are in the migrations/ folder, generated with Atlas. Migrations run automatically when the server starts. To apply manually, download Atlas from https://atlasgo.io and run:
+This creates a user with:
+- Email: `admin@example.com`
+- Password: `password`
 
-atlas migrate apply --env local
+---
 
-Copy
-API
+## Tests
+go test -v ./...
+
+Tests cover: password hashing, bcrypt salting, JWT generation, token expiry, wrong secret detection, tampered token detection, login flow, and refresh token uniqueness.
+
+---
+
+## Automation (Makefile)
+make run          # start the server
+make build        # compile to ./bin/auth-server
+make test         # run all tests with race detector
+make docker-up    # start PostgreSQL container
+make docker-down  # stop PostgreSQL container
+make generate     # re-run Ent + gqlgen code generation
+
+---
+
+## API
+
 Open http://localhost:8082 in your browser for the GraphQL playground.
 
-Login
+### Login
+```graphql
 mutation {
   login(email: "admin@example.com", password: "password") {
     accessToken
     refreshToken
   }
 }
+```
 
-Copy
-Get current user
-Add to the Headers tab in GraphiQL:
-
-{ "Authorization": "Bearer YOUR_ACCESS_TOKEN" }
-
-Copy
-Then run:
-
+### Me
+Add header: `Authorization: Bearer <accessToken>`
+```graphql
 query {
   me {
     id
     email
   }
 }
+```
 
-Copy
-Refresh token
-First login to get a refresh token, then immediately run:
-
+### Refresh
+```graphql
 mutation {
   refresh(refreshToken: "YOUR_REFRESH_TOKEN") {
     accessToken
     refreshToken
   }
 }
+```
 
-Copy
-Refresh tokens expire after 24 hours. You must login first to get a valid one.
-Logout
+### Logout
+```graphql
 mutation {
   logout(refreshToken: "YOUR_REFRESH_TOKEN")
 }
+```
 
-Copy
-Tests
-go test -v
+---
 
-Copy
-Covers password hashing, JWT generation/validation, token expiry, login success/failure, and refresh token rotation.
-
-How it works
-Login
-
-Checks the password with bcrypt. If correct, returns a JWT access token (1 hour expiry) and a refresh token stored in the database.
-
-me query
-
-Reads the user ID from the token in the Authorization header.
-
-Refresh
-
-Deletes the old token and issues a new pair.
-
-Logout
-
-Deletes the refresh token from the database.
-
+## Project Structure
+auth-server/
+├── ent/
+│   ├── schema/
+│   │   ├── user.go          # Custom Email type with validation, privacy policy, edges
+│   │   ├── refreshtoken.go  # RefreshToken schema with privacy policy
+│   │   ├── privacy.go       # AllowIfAdmin, AllowIfOwner, DenyIfNoViewer rules
+│   │   └── schema_test.go   # Email validation tests + policy context tests
+├── graph/
+│   ├── helpers.go           # generateToken, validateToken, generateRefreshToken
+│   ├── resolver.go          # Root resolver with injectable PasswordChecker interface
+│   └── schema.resolvers.go  # Login, Refresh, Logout, Me — all use graphql.ErrorOnPath
+├── migrations/              # Atlas SQL migration files
+├── .env.example             # Environment variable template (safe to commit)
+├── .env                     # Your local config (git-ignored)
+├── docker-compose.yml       # Reads DB config from .env
+├── atlas.hcl                # Reads DB config from .env
+├── Makefile                 # Automation targets
+└── server.go                # Entry point — reads all config from .env via godotenv
